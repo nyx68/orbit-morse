@@ -1,0 +1,200 @@
+[
+    {
+        "id": "a9f2bc6cde35d4b7",
+        "type": "tab",
+        "label": "Flow 3",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "b8d8222838a5b78e",
+        "type": "function",
+        "z": "a9f2bc6cde35d4b7",
+        "name": "process message & decode morse",
+        "func": "// --- CONSTANTS & VARIABLES ----\n\nconst morseTable = {\n    \".-\": \"A\",\n    \"-...\": \"B\",\n    \"-.-.\": \"C\",\n    \"-..\": \"D\",\n    \".\": \"E\",\n    \"..-.\": \"F\",\n    \"--.\": \"G\",\n    \"....\": \"H\",\n    \"..\": \"I\",\n    \".---\": \"J\",\n    \"-.-\": \"K\",\n    \".-..\": \"L\",\n    \"--\": \"M\",\n    \"-.\": \"N\",\n    \"---\": \"O\",\n    \".--.\": \"P\",\n    \"--.-\": \"Q\",\n    \".-.\": \"R\",\n    \"...\": \"S\",\n    \"-\": \"T\",\n    \"..-\": \"U\",\n    \"...-\": \"V\",\n    \".--\": \"W\",\n    \"-..-\": \"X\",\n    \"-.--\": \"Y\",\n    \"--..\": \"Z\"\n};\n\nconst payload = msg.payload;\nconst senderId = payload[0];\nconst messageType = payload[1];\n\nconst receiverId = senderId === 1 ? 2 : 1;\nconst displayTopic = \"orbitmorse/project42/display\";\n\nlet timerRunout = flow.get(\"timerRunout\") || false;\n\nlet currentMorse = flow.get(\"currentMorse\") || {\n    morse: \"\",\n    senderId: null\n};\nlet decodedText = flow.get(\"decodedText\") || {\n    text: \"\",\n    morse: \"\",\n    senderId: null\n};\nlet currentCharPlayback = flow.get(\"currentCharPlayback\") || {\n    sequence: [],\n    senderId: null\n};\nlet pendingMessage = flow.get(\"pendingMessage\") || null;\n\n// --- PLAYBACK STRUCTURE ---\n// playback = {\n//     senderId: 2,\n//     letters: [\n//         {\n//             char: \"A\",\n//             morse: \".-\",\n//             sequence: [\n//                 { type: \"signal\", duration: 180 },\n//                 { type: \"pause\", duration: 150 },\n//                 { type: \"signal\", duration: 650 }\n//             ]\n//         },\n//         {\n//             char: \"E\",\n//             morse: \".\",\n//             sequence: [\n//                 { type: \"pause\", duration: 1800 },\n//                 { type: \"signal\", duration: 200 }\n//             ]\n//         }\n//     ]\n// };\nlet playback = flow.get(\"playback\") || {\n    senderId: senderId,\n    letters: []\n};\n\n// --- FUNCTIONS ----\n\nfunction decodeMorse(morse) {\n    return morseTable[morse];\n}\n\nfunction addPlayback(type, duration) {\n    currentCharPlayback.sequence.push({\n        type: type,\n        duration: duration\n    });\n    flow.set(\"currentCharPlayback\", currentCharPlayback);\n}\n\n// --- MESSAGE HANDLING ----\n\nif (messageType === 1) {\n    if (currentMorse.senderId === null) {\n        currentMorse = {\n            morse: \"\",\n            senderId: senderId\n        };\n\n        decodedText = {\n            text: \"\",\n            morse: \"\",\n            senderId: senderId\n        };\n\n        currentCharPlayback = {\n            sequence: [],\n            senderId: senderId\n        };\n\n        playback = {\n            senderId: senderId,\n            letters: []\n        };\n\n        flow.set(\"currentMorse\", currentMorse);\n        flow.set(\"decodedText\", decodedText);\n        flow.set(\"currentCharPlayback\", currentCharPlayback);\n        flow.set(\"playback\", playback);\n    }\n}\n\nelse if (messageType === 3 || messageType === 4) {\n    if (senderId !== currentMorse.senderId) {\n        msg.payload = Buffer.from([0, 10]);\n        return msg;\n    }\n\n    if (messageType === 3 ) {\n        currentMorse.morse += \".\";\n    } else {\n        currentMorse.morse += \"-\";\n    }\n    flow.set(\"currentMorse\", currentMorse);\n\n    let signalDuration = null;\n    let pauseDuration = null;\n    if (payload.length >= 10) {\n        signalDuration = payload.readUInt32LE(2);\n        pauseDuration = payload.readUInt32LE(6);\n    }\n    if (pauseDuration !== null && pauseDuration > 0) {\n        addPlayback(\"pause\", pauseDuration);\n    }\n    if (signalDuration !== null) {\n        addPlayback(\"signal\", signalDuration);\n    }\n}\n\nelse if (messageType === 5) {\n    if (senderId !== currentMorse.senderId) {\n        msg.payload = Buffer.from([0, 10]);\n        return msg;\n    }\n\n    if (currentMorse.morse.length === 0) {\n        return null;\n    }\n\n    const decodedChar = decodeMorse(currentMorse.morse) || \"?\";\n\n    if (decodedChar != null) {\n        decodedText.text += decodedChar;\n        decodedText.morse += currentMorse.morse + \" \";\n        flow.set(\"decodedText\", decodedText);\n\n        playback.letters.push({\n            char: decodedChar,\n            morse: currentMorse.morse,\n            sequence: currentCharPlayback.sequence.slice()\n        });\n        flow.set(\"playback\", playback);\n    }\n\n    currentMorse.morse = \"\";\n    flow.set(\"currentMorse\", currentMorse);\n\n    currentCharPlayback.sequence = [];\n    flow.set(\"currentCharPlayback\", currentCharPlayback);\n\n    msg.topic = displayTopic\n    msg.payload = decodedText.text;\n    return msg;\n}\n\nelse if (messageType === 6) {\n    if (senderId !== currentMorse.senderId) {\n        return null;\n    }\n    decodedText.text += \" \";\n    decodedText.morse += \"  \";\n    flow.set(\"decodedText\", decodedText);\n\n    playback.letters.push({\n        char: \" \",\n        morse: \"\",\n        sequence: []\n    });\n    flow.set(\"playback\", playback);\n}\n\nelse if (messageType === 7) {\n    if (senderId !== currentMorse.senderId) {\n        return null;\n    }\n    flow.set(\"pendingMessage\", {\n        morse: decodedText.morse,\n        text: decodedText.text,\n        senderId: senderId,\n        receiverId: receiverId,\n        sentAt: Date.now(),\n        acknowledged: false,\n        playback: playback.letters\n    });\n\n    // --- Nachricht abgeschlossen -> alles zurücksetzen ---\n    flow.set(\"currentMorse\", {\n        morse: \"\",\n        senderId: null\n    });\n\n    flow.set(\"decodedText\", {\n        text: \"\",\n        morse: \"\",\n        senderId: null\n    });\n\n    flow.set(\"currentCharPlayback\", {\n        sequence: [],\n        senderId: null\n    });\n\n    flow.set(\"playback\", {\n        senderId: null,\n        letters: []\n    });\n\n    // --- Timer starten ---\n    const timerMsg = {\n        payload: \"start\",\n        messageId: Date.now()\n    };\n\n    return [null, timerMsg];\n}\n\nelse if (messageType === 8) {\n    if (pendingMessage && senderId === pendingMessage.receiverId) {\n        pendingMessage.acknowledged = true;\n        flow.set(\"pendingMessage\", pendingMessage);\n\n        if (timerRunout) {\n            msg.topic = \"orbitmorse/project42/playback/\" + senderId;\n            msg.payload = JSON.stringify ({\n                senderId: pendingMessage.senderId,\n                messageType: 9,\n                text: pendingMessage.text,\n                playback: pendingMessage.playback\n            });\n            return msg;\n        }\n    }\n}\n\nelse if (messageType === 11) {\n    if (senderId !== currentMorse.senderId) {\n        return null;\n    }\n\n    currentMorse.morse = \"\";\n    currentCharPlayback.sequence = [];\n\n    decodedText.text = decodedText.text.trimEnd();\n    decodedText.morse = decodedText.morse.trimEnd();\n\n    if (decodedText.text.length > 0) {\n        decodedText.text = decodedText.text.slice(0, -1);\n\n        let index = decodedText.morse.lastIndexOf(\" \");\n        decodedText.morse = decodedText.morse.slice(0, index + 1);\n\n        // --- Delete last letter from playback ---\n        playback.letters.pop();\n    }\n\n    flow.set(\"currentMorse\", currentMorse);\n    flow.set(\"currentCharPlayback\", currentCharPlayback);\n    flow.set(\"decodedText\", decodedText);\n    flow.set(\"playback\", playback);\n\n    msg.topic = displayTopic;\n    msg.payload = decodedText.text;\n    return msg;\n}\n\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 680,
+        "y": 380,
+        "wires": [
+            [
+                "0737e5bac777c360",
+                "c6e57cd28b46e74b",
+                "8ff1025a527b32a2"
+            ]
+        ]
+    },
+    {
+        "id": "c6e57cd28b46e74b",
+        "type": "trigger",
+        "z": "a9f2bc6cde35d4b7",
+        "name": "",
+        "op1": "",
+        "op2": "",
+        "op1type": "nul",
+        "op2type": "pay",
+        "duration": "60",
+        "extend": false,
+        "overrideDelay": false,
+        "units": "s",
+        "reset": "",
+        "bytopic": "all",
+        "topic": "topic",
+        "outputs": 1,
+        "x": 690,
+        "y": 500,
+        "wires": [
+            [
+                "cf58f4766aa7ba25"
+            ]
+        ]
+    },
+    {
+        "id": "9037520ac58bd9ad",
+        "type": "mqtt in",
+        "z": "a9f2bc6cde35d4b7",
+        "name": "",
+        "topic": "orbitmorse/project42/events",
+        "qos": "0",
+        "datatype": "auto-detect",
+        "broker": "96ac25a5bfd813e4",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 320,
+        "y": 380,
+        "wires": [
+            [
+                "b8d8222838a5b78e",
+                "a693633c8e5d86a3"
+            ]
+        ]
+    },
+    {
+        "id": "0737e5bac777c360",
+        "type": "mqtt out",
+        "z": "a9f2bc6cde35d4b7",
+        "name": "",
+        "topic": "",
+        "qos": "0",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "96ac25a5bfd813e4",
+        "x": 1030,
+        "y": 380,
+        "wires": []
+    },
+    {
+        "id": "cf58f4766aa7ba25",
+        "type": "function",
+        "z": "a9f2bc6cde35d4b7",
+        "name": "handle pending message",
+        "func": "const pendingMessage = flow.get(\"pendingMessage\");\nlet timerRunout = flow.get(\"timerRunout\");\n\nif (!pendingMessage) {\n    return null;\n}\n\nif (pendingMessage.acknowledged) {\n    return null;\n}\n\nflow.set(\"timerRunout\", true);\n\nmsg.topic = \"orbitmorse/project42/events\";\n\nmsg.payload = Buffer.from([\n    pendingMessage.senderId,\n    9  \n]);\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 950,
+        "y": 500,
+        "wires": [
+            [
+                "0737e5bac777c360",
+                "aa5555524b224cd3"
+            ]
+        ]
+    },
+    {
+        "id": "8ff1025a527b32a2",
+        "type": "debug",
+        "z": "a9f2bc6cde35d4b7",
+        "name": "processed messages",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1080,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "a693633c8e5d86a3",
+        "type": "debug",
+        "z": "a9f2bc6cde35d4b7",
+        "name": "incoming messages",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "true",
+        "targetType": "full",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 640,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "aa5555524b224cd3",
+        "type": "debug",
+        "z": "a9f2bc6cde35d4b7",
+        "name": "pending messages",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "payload",
+        "targetType": "msg",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 1250,
+        "y": 500,
+        "wires": []
+    },
+    {
+        "id": "96ac25a5bfd813e4",
+        "type": "mqtt-broker",
+        "name": "",
+        "broker": "broker.hivemq.com",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]

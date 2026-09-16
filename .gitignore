@@ -1,0 +1,13 @@
+# PlatformIO build files
+.pio/
+
+# IDE files
+.vscode/
+.idea/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
